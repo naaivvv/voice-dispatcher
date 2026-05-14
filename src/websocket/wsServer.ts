@@ -5,6 +5,16 @@ import { dispatcherOrchestrator } from '../agent';
 import { sessionManager, CallSession } from './sessionManager';
 import { AUDIO_CONFIG, ClientMessage, ServerMessage } from './types';
 import { TurnTimer } from '../utils/metrics';
+import {
+    authenticateWebSocket,
+    checkWsConnectionLimit,
+    getRequestIp,
+    isAllowedWsOrigin,
+    securityConfig,
+    selectWebSocketProtocol,
+    wsAgentTurnLimiter,
+    wsMessageLimiter,
+} from '../security';
 
 function send(ws: WebSocket, message: ServerMessage): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -127,7 +137,7 @@ async function handleControlMessage(
                 console.error(`[WS] TTS error for session ${session.id}:`, errorMessage);
                 send(ws, {
                     type: 'error',
-                    message: `Dispatcher speech failed: ${errorMessage}`,
+                    message: 'Dispatcher speech failed',
                 });
                 send(ws, { type: 'agent.done' });
             }
@@ -146,6 +156,16 @@ async function handleControlMessage(
             const transcription = message.text?.trim();
             if (!transcription) {
                 send(ws, { type: 'error', message: 'driver.transcription requires text' });
+                return;
+            }
+
+            const agentTurnLimit = wsAgentTurnLimiter.consume(session.id);
+            if (!agentTurnLimit.allowed) {
+                console.warn(`[Security] WS agent turn rate limit exceeded for session ${session.id}`);
+                send(ws, {
+                    type: 'error',
+                    message: 'Too many agent requests. Please wait before sending another update.',
+                });
                 return;
             }
 
@@ -227,7 +247,7 @@ async function handleControlMessage(
                     console.error(`[WS] Orchestrator error for session ${session.id}:`, errorMessage);
                     send(ws, {
                         type: 'error',
-                        message: `Agent processing failed: ${errorMessage}`,
+                        message: 'Agent processing failed',
                     });
                     send(ws, { type: 'agent.done' });
                 }
@@ -277,14 +297,50 @@ function handleAudioFrame(session: CallSession, data: Buffer): void {
 }
 
 export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
+    const connectionsByIp = new Map<string, number>();
+
     const wss = new WebSocketServer({
         server: httpServer,
         path: '/ws/call',
+        maxPayload: securityConfig.wsMaxJsonBytes,
+        handleProtocols: selectWebSocketProtocol,
+        verifyClient: (info, done) => {
+            const ip = getRequestIp(info.req);
+
+            if (!isAllowedWsOrigin(info.req)) {
+                console.warn(`[Security] WebSocket rejected from disallowed origin: ${info.origin || 'none'}`);
+                done(false, 403, 'Forbidden');
+                return;
+            }
+
+            if (!authenticateWebSocket(info.req)) {
+                console.warn(`[Security] WebSocket rejected for missing/invalid token from ${ip}`);
+                done(false, 401, 'Unauthorized');
+                return;
+            }
+
+            const activeForIp = connectionsByIp.get(ip) ?? 0;
+            if (activeForIp >= securityConfig.wsMaxConnectionsPerIp) {
+                console.warn(`[Security] WebSocket concurrent connection limit exceeded for ${ip}`);
+                done(false, 429, 'Too Many Requests');
+                return;
+            }
+
+            if (!checkWsConnectionLimit(info.req)) {
+                done(false, 429, 'Too Many Requests');
+                return;
+            }
+
+            done(true);
+        },
     });
 
     console.log('[WS] WebSocket server initialized on /ws/call');
 
-    wss.on('connection', (ws: WebSocket) => {
+    wss.on('connection', (ws: WebSocket, req) => {
+        const ip = getRequestIp(req);
+        connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
+
         const session = sessionManager.createSession(ws);
         console.log(
             `[WS] New connection: session ${session.id} ` +
@@ -293,10 +349,24 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
 
         ws.on('message', async (raw: RawData, isBinary: boolean) => {
             try {
+                const messageLimit = wsMessageLimiter.consume(session.id);
+                if (!messageLimit.allowed) {
+                    console.warn(`[Security] WS message rate limit exceeded for session ${session.id}`);
+                    send(ws, { type: 'error', message: 'Too many messages. Please slow down.' });
+                    return;
+                }
+
                 if (isBinary) {
                     handleAudioFrame(session, raw as Buffer);
                 } else {
                     const text = raw.toString('utf-8');
+                    if (Buffer.byteLength(text, 'utf-8') > securityConfig.wsMaxJsonBytes) {
+                        console.warn(`[Security] WS JSON payload too large for session ${session.id}`);
+                        send(ws, { type: 'error', message: 'Message payload is too large' });
+                        ws.close(1009, 'message_too_large');
+                        return;
+                    }
+
                     const message: ClientMessage = JSON.parse(text);
                     await handleControlMessage(session, message);
                 }
@@ -316,6 +386,12 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
             );
             dispatcherOrchestrator.endSession(session.id);
             sessionManager.endSession(session.id);
+            const activeForIp = connectionsByIp.get(ip) ?? 0;
+            if (activeForIp <= 1) {
+                connectionsByIp.delete(ip);
+            } else {
+                connectionsByIp.set(ip, activeForIp - 1);
+            }
         });
 
         ws.on('error', (err: Error) => {

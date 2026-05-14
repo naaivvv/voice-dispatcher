@@ -20,6 +20,7 @@
     "@supabase/supabase-js": "^2.105.4",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "helmet": "^8.1.0",
     "langchain": "^1.4.0",
     "uuid": "^14.0.0",
     "ws": "^8.20.1"

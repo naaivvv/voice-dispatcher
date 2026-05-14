@@ -1,12 +1,22 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
+import helmet from 'helmet';
 import path from 'path';
 import { elevenLabsTts } from './voice';
 import { createWebSocketServer, sessionManager } from './websocket';
+import {
+    enforceAllowedOrigin,
+    rateLimitHttp,
+    requireClientToken,
+    securityConfig,
+} from './security';
 
 const app = express();
-app.use(express.json());
+app.set('trust proxy', 1);
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(enforceAllowedOrigin);
+app.use(express.json({ limit: securityConfig.wsMaxJsonBytes }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 const PORT = process.env.PORT || 3000;
@@ -17,14 +27,16 @@ app.get('/health', (_req, res) => {
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptimeSeconds: process.uptime(),
-        memoryUsage: process.memoryUsage(),
         activeSessions: sessionManager.activeCount,
-        tts: elevenLabsTts.getConfig(),
+        providers: {
+            ttsConfigured: elevenLabsTts.getConfig().configured,
+            clientAuthConfigured: Boolean(securityConfig.clientToken),
+        },
     });
 });
 
 // ── Active sessions monitor ────────────────────────────────
-app.get('/sessions', (_req, res) => {
+app.get('/sessions', rateLimitHttp, requireClientToken, (_req, res) => {
     res.json({
         count: sessionManager.activeCount,
         sessions: sessionManager.getActiveSessions(),

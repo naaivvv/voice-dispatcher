@@ -23,6 +23,9 @@
     <div class="card">
         <h3><span id="statusDot" class="status-dot"></span> Connection</h3>
         <div class="row">
+            <input type="text" id="tokenInput" placeholder="Dispatcher client token">
+        </div>
+        <div class="row">
             <input type="text" id="phoneInput" placeholder="Enter Driver Phone Number (e.g. +15551234567)" value="+15551234567">
             <button id="connectBtn">Connect (call.start)</button>
             <button id="disconnectBtn" class="danger" disabled>Disconnect</button>
@@ -52,6 +55,7 @@
 
         const ui = {
             statusDot: document.getElementById('statusDot'),
+            tokenInput: document.getElementById('tokenInput'),
             phoneInput: document.getElementById('phoneInput'),
             connectBtn: document.getElementById('connectBtn'),
             disconnectBtn: document.getElementById('disconnectBtn'),
@@ -90,6 +94,7 @@
         function setConnected(connected) {
             ui.statusDot.className = `status-dot ${connected ? 'connected' : ''}`;
             ui.connectBtn.disabled = connected;
+            ui.tokenInput.disabled = connected;
             ui.phoneInput.disabled = connected;
             ui.disconnectBtn.disabled = !connected;
             ui.transcriptInput.disabled = !connected;
@@ -104,11 +109,19 @@
                 return;
             }
 
+            const token = ui.tokenInput.value.trim();
+            if (!token) {
+                alert('Please enter the dispatcher client token');
+                return;
+            }
+
+            localStorage.setItem('dispatcherClientToken', token);
+
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/call`;
             
             appendLog(`Connecting to ${wsUrl}...`);
-            ws = new WebSocket(wsUrl);
+            ws = new WebSocket(wsUrl, ['voice-dispatcher', token]);
 
             ws.onopen = () => {
                 setConnected(true);
@@ -192,6 +205,8 @@
                 ui.sendTranscriptBtn.click();
             }
         });
+
+        ui.tokenInput.value = localStorage.getItem('dispatcherClientToken') || '';
     </script>
 </body>
 </html>
