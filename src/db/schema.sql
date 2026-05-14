@@ -43,11 +43,36 @@ COMMENT ON COLUMN deliveries.estimated_arrival  IS 'ETA field updated by the AI 
 COMMENT ON COLUMN deliveries.status             IS 'Lifecycle: pending → in_transit → completed | cancelled';
 
 -- ----------------------------------------------------------
+-- Table: dispatch_audit_log
+-- Tracks all AI-driven state mutations for traceability.
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dispatch_audit_log (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id    TEXT        NOT NULL,
+    driver_id     UUID        NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+    action        TEXT        NOT NULL,
+    entity_type   TEXT        NOT NULL CHECK (entity_type IN ('delivery', 'driver')),
+    entity_id     UUID        NOT NULL,
+    field_changed TEXT        NOT NULL,
+    old_value     TEXT,
+    new_value     TEXT        NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE  dispatch_audit_log              IS 'Audit trail for all AI-driven state changes';
+COMMENT ON COLUMN dispatch_audit_log.session_id   IS 'WebSocket session that triggered the change';
+COMMENT ON COLUMN dispatch_audit_log.action       IS 'Human-readable action name (e.g. update_eta, complete_delivery)';
+COMMENT ON COLUMN dispatch_audit_log.entity_type  IS 'Type of entity changed: delivery or driver';
+
+-- ----------------------------------------------------------
 -- Indexes
 -- ----------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_drivers_phone      ON drivers    (phone_number);
-CREATE INDEX IF NOT EXISTS idx_deliveries_driver   ON deliveries (driver_id);
-CREATE INDEX IF NOT EXISTS idx_deliveries_status   ON deliveries (status);
+CREATE INDEX IF NOT EXISTS idx_drivers_phone      ON drivers             (phone_number);
+CREATE INDEX IF NOT EXISTS idx_deliveries_driver   ON deliveries          (driver_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status   ON deliveries          (status);
+CREATE INDEX IF NOT EXISTS idx_audit_session       ON dispatch_audit_log  (session_id);
+CREATE INDEX IF NOT EXISTS idx_audit_driver        ON dispatch_audit_log  (driver_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created       ON dispatch_audit_log  (created_at);
 
 -- ----------------------------------------------------------
 -- Auto-update updated_at via trigger
@@ -58,7 +83,9 @@ BEGIN
     NEW.updated_at = now();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public;
 
 CREATE TRIGGER trg_drivers_updated_at
     BEFORE UPDATE ON drivers
@@ -67,6 +94,18 @@ CREATE TRIGGER trg_drivers_updated_at
 CREATE TRIGGER trg_deliveries_updated_at
     BEFORE UPDATE ON deliveries
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ----------------------------------------------------------
+-- Security: Row Level Security (RLS)
+-- ----------------------------------------------------------
+-- Enable RLS on all tables to prevent unauthorized public API access.
+-- The backend service uses the SERVICE_ROLE_KEY which bypasses RLS.
+ALTER TABLE drivers            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deliveries         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dispatch_audit_log ENABLE ROW LEVEL SECURITY;
+
+-- Note: No public policies are added, meaning all public access via anon/authenticated 
+-- keys is denied by default. Access is restricted to the service role.
 
 -- ----------------------------------------------------------
 -- Seed data (for development / testing)
@@ -92,30 +131,3 @@ BEGIN
         (v_maria,  '789 Pine Rd, Capital City',   now() + INTERVAL '2 hours', now() + INTERVAL '2.5 hours', 'in_transit')
     ON CONFLICT DO NOTHING;
 END $$;
-
--- ----------------------------------------------------------
--- Table: dispatch_audit_log
--- Tracks all AI-driven state mutations for traceability.
--- ----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS dispatch_audit_log (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    session_id    TEXT        NOT NULL,
-    driver_id     UUID        NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
-    action        TEXT        NOT NULL,
-    entity_type   TEXT        NOT NULL CHECK (entity_type IN ('delivery', 'driver')),
-    entity_id     UUID        NOT NULL,
-    field_changed TEXT        NOT NULL,
-    old_value     TEXT,
-    new_value     TEXT        NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-COMMENT ON TABLE  dispatch_audit_log              IS 'Audit trail for all AI-driven state changes';
-COMMENT ON COLUMN dispatch_audit_log.session_id   IS 'WebSocket session that triggered the change';
-COMMENT ON COLUMN dispatch_audit_log.action       IS 'Human-readable action name (e.g. update_eta, complete_delivery)';
-COMMENT ON COLUMN dispatch_audit_log.entity_type  IS 'Type of entity changed: delivery or driver';
-
-CREATE INDEX IF NOT EXISTS idx_audit_session  ON dispatch_audit_log (session_id);
-CREATE INDEX IF NOT EXISTS idx_audit_driver   ON dispatch_audit_log (driver_id);
-CREATE INDEX IF NOT EXISTS idx_audit_created  ON dispatch_audit_log (created_at);
-
