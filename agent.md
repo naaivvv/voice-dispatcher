@@ -11,6 +11,7 @@ The implementation plan lives in [ROADMAP.md](ROADMAP.md). Treat that file as th
 - Source control has been initialized for this repository, but the user reported that no git data/history is present yet.
 - Roadmap Steps 1 through 5 are considered implemented.
 - The next planned implementation target is **Roadmap Step 6: Refinement & Interruption Handling**.
+- **Production Target:** The system will be deployed to **Render**. Ensure that environment variables (PORT, ALLOWED_ORIGINS, secrets) are handled via Render's dashboard and that the `start` script remains `node dist/index.js`.
 - Before starting Step 6, review the existing WebSocket audio pipeline and TTS streaming to understand the interruption integration points.
 
 ## App Purpose
