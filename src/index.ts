@@ -16,6 +16,8 @@ app.get('/health', (_req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
+        uptimeSeconds: process.uptime(),
+        memoryUsage: process.memoryUsage(),
         activeSessions: sessionManager.activeCount,
         tts: elevenLabsTts.getConfig(),
     });

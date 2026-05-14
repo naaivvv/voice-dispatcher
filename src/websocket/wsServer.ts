@@ -1,8 +1,10 @@
 import { Server as HTTPServer } from 'http';
 import { RawData, WebSocket, WebSocketServer } from 'ws';
 import { elevenLabsTts } from '../voice';
+import { dispatcherOrchestrator } from '../agent';
 import { sessionManager, CallSession } from './sessionManager';
 import { AUDIO_CONFIG, ClientMessage, ServerMessage } from './types';
+import { TurnTimer } from '../utils/metrics';
 
 function send(ws: WebSocket, message: ServerMessage): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -32,21 +34,34 @@ async function streamDispatcherSpeech(
         text,
     });
 
-    const bytes = await elevenLabsTts.streamSpeech({
-        text,
-        voiceId: message.voice_id,
-        modelId: message.model_id,
-        outputFormat: message.output_format,
-        onChunk: (chunk) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(chunk, { binary: true });
-            }
-        },
-    });
+    session.abortController = new AbortController();
 
-    sessionManager.addTranscript(session.id, 'agent', text);
-    send(ws, { type: 'audio.output.done', bytes });
-    send(ws, { type: 'agent.done' });
+    try {
+        const bytes = await elevenLabsTts.streamSpeech({
+            text,
+            voiceId: message.voice_id,
+            modelId: message.model_id,
+            outputFormat: message.output_format,
+            abortSignal: session.abortController.signal,
+            onChunk: (chunk) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(chunk, { binary: true });
+                }
+            },
+        });
+
+        sessionManager.addTranscript(session.id, 'agent', text);
+        send(ws, { type: 'audio.output.done', bytes });
+        send(ws, { type: 'agent.done' });
+    } catch (err: any) {
+        if (err.name === 'AbortError') {
+            console.log(`[WS] Dispatcher speech aborted for session ${session.id}`);
+        } else {
+            throw err;
+        }
+    } finally {
+        session.abortController = null;
+    }
 }
 
 async function handleControlMessage(
@@ -119,9 +134,126 @@ async function handleControlMessage(
             break;
         }
 
+        case 'driver.transcription': {
+            if (session.state !== 'active' && session.state !== 'processing') {
+                send(ws, {
+                    type: 'error',
+                    message: 'Call must be started before sending transcriptions',
+                });
+                return;
+            }
+
+            const transcription = message.text?.trim();
+            if (!transcription) {
+                send(ws, { type: 'error', message: 'driver.transcription requires text' });
+                return;
+            }
+
+            // Abort any active TTS playing to the driver
+            if (session.abortController) {
+                console.log(`[WS] driver.transcription interrupting active TTS for session ${session.id}`);
+                session.abortController.abort('new_transcription');
+                session.abortController = null;
+                send(ws, { type: 'audio.interrupted' });
+            }
+
+            // Prevent concurrent processing runs
+            if (session.state === 'processing') {
+                console.log(`[WS] Skipping driver.transcription: session ${session.id} is already processing`);
+                return;
+            }
+            session.state = 'processing';
+
+            const timer = new TurnTimer(session.id, session.metrics.turnCount + 1);
+
+            try {
+                send(ws, { type: 'agent.thinking' });
+
+                timer.start('llm');
+                // Process through the LangChain orchestrator
+                const result = await dispatcherOrchestrator.processDriverMessage(
+                    session.id,
+                    transcription
+                );
+                timer.end('llm');
+
+                // Send the structured response (text + intent) for client logic
+                send(ws, {
+                    type: 'agent.response',
+                    text: result.text,
+                    intent: result.intent,
+                });
+
+                // Notify client about any tools that were executed
+                for (const exec of result.toolExecutions) {
+                    send(ws, {
+                        type: 'action.executed',
+                        tool: exec.tool,
+                        result: exec.result,
+                    });
+                }
+
+                // Stream TTS audio of the agent's response
+                send(ws, { type: 'agent.speaking', text: result.text });
+                send(ws, {
+                    type: 'audio.output.start',
+                    format: AUDIO_CONFIG.outputFormat,
+                    sample_rate: AUDIO_CONFIG.outputSampleRate,
+                    voice_id: elevenLabsTts.getConfig().defaultVoiceId,
+                    text: result.text,
+                });
+
+                session.abortController = new AbortController();
+
+                timer.start('tts');
+                const bytes = await elevenLabsTts.streamSpeech({
+                    text: result.text,
+                    abortSignal: session.abortController.signal,
+                    onChunk: (chunk) => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(chunk, { binary: true });
+                        }
+                    },
+                });
+                timer.end('tts');
+
+                send(ws, { type: 'audio.output.done', bytes });
+                send(ws, { type: 'agent.done' });
+            } catch (err: any) {
+                if (err.name === 'AbortError') {
+                    console.log(`[WS] Orchestrator speech aborted for session ${session.id}`);
+                } else {
+                    const errorMessage = err instanceof Error ? err.message : 'Unknown orchestrator failure';
+                    console.error(`[WS] Orchestrator error for session ${session.id}:`, errorMessage);
+                    send(ws, {
+                        type: 'error',
+                        message: `Agent processing failed: ${errorMessage}`,
+                    });
+                    send(ws, { type: 'agent.done' });
+                }
+            } finally {
+                session.state = 'active';
+                session.abortController = null;
+                const turnMetrics = timer.finalize();
+                session.metrics.record(turnMetrics);
+            }
+            break;
+        }
+
+        case 'driver.interrupt': {
+            if (session.abortController) {
+                console.log(`[WS] driver.interrupt for session ${session.id}: aborting active TTS`);
+                session.abortController.abort('driver_interrupted');
+                session.abortController = null;
+                send(ws, { type: 'audio.interrupted' });
+            }
+            break;
+        }
+
         case 'call.end': {
             console.log(`[WS] call.end for session: ${session.id}`);
             send(ws, { type: 'session.ended', reason: 'client_hangup' });
+            dispatcherOrchestrator.endSession(session.id);
             sessionManager.endSession(session.id);
             ws.close();
             break;
@@ -182,6 +314,7 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
                 `[WS] Connection closed: session ${session.id}, ` +
                 `code: ${code}, reason: ${reason.toString() || 'none'}`
             );
+            dispatcherOrchestrator.endSession(session.id);
             sessionManager.endSession(session.id);
         });
 

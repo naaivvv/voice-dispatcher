@@ -132,6 +132,25 @@
 
 ---
 
+## Step 7: Polish & Documentation
+### Objectives
+- Finalize codebase and audit for stability
+- Document the entire architecture and integration
+- Provide alternative LLM provider strategies for cost optimization
+
+### Tasks
+- Add Step 7 to the roadmap
+- Perform final scan and cleanup of codebase
+- Generate comprehensive system walkthrough
+- Outline strategies for using Groq, Gemini, and local LLMs
+
+### Deliverables
+- System Walkthrough Document
+- Final Polished Codebase
+- Alternative LLM Configuration Guide
+
+---
+
 # Recommended Tech Stack
 
 ## Backend

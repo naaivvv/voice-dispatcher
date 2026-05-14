@@ -6,6 +6,13 @@ This repository is the **Stateful Voice-to-Voice Logistics Dispatcher** describe
 
 The implementation plan lives in [ROADMAP.md](ROADMAP.md). Treat that file as the active build queue. Work through it one step at a time, in order, unless the user explicitly asks to jump ahead or revise the plan.
 
+## Current Progress
+
+- Source control has been initialized for this repository, but the user reported that no git data/history is present yet.
+- Roadmap Steps 1 through 5 are considered implemented.
+- The next planned implementation target is **Roadmap Step 6: Refinement & Interruption Handling**.
+- Before starting Step 6, review the existing WebSocket audio pipeline and TTS streaming to understand the interruption integration points.
+
 ## App Purpose
 
 Build a real-time AI dispatcher for logistics, delivery, and non-emergency transport operations. The system should support natural voice conversations with drivers, maintain session context, update route and ETA state, and stream realistic dispatcher voice responses.
@@ -25,7 +32,7 @@ The core outcome is an operational backend that can:
 - Server: Express and `ws`.
 - Database: Supabase client and SQL schema in `src/db`.
 - Voice: ElevenLabs TTS in `src/voice`.
-- AI orchestration target: LangChain and OpenAI-compatible LLM provider.
+- AI orchestration: LangChain with OpenAI in `src/agent`.
 - Configuration: `.env` locally, `.env.example` for documented variables.
 
 ## Scope Rules

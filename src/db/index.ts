@@ -3,3 +3,4 @@ export { supabase } from './supabaseClient';
 export * from './types';
 export * from './driverService';
 export * from './deliveryService';
+export * from './auditService';

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Driver, Delivery } from '../db/types';
 import { getDriverByPhone } from '../db/driverService';
 import { getActiveDeliveriesForDriver } from '../db/deliveryService';
+import { SessionMetricsTracker } from '../utils/metrics';
 
 // ============================================================
 // Call Session — one per active WebSocket connection
@@ -27,6 +28,10 @@ export interface CallSession {
     startedAt: Date;
     /** When the call ended */
     endedAt: Date | null;
+    /** Controller to abort active TTS generation */
+    abortController: AbortController | null;
+    /** Track performance metrics for this session */
+    metrics: SessionMetricsTracker;
 }
 
 // ============================================================
@@ -50,6 +55,8 @@ class SessionManager {
             state: 'connecting',
             startedAt: new Date(),
             endedAt: null,
+            abortController: null,
+            metrics: new SessionMetricsTracker(),
         };
 
         this.sessions.set(session.id, session);
@@ -91,10 +98,16 @@ class SessionManager {
 
     /**
      * Append an audio chunk to the session buffer.
+     * Prevents unbounded growth by dropping chunks if buffer is too large.
      */
     pushAudio(sessionId: string, chunk: Buffer): void {
         const session = this.sessions.get(sessionId);
         if (session && session.state === 'active') {
+            // Guard against unbounded memory growth (e.g. 50 chunks = ~1.5s of audio)
+            if (session.audioBuffer.length > 50) {
+                console.warn(`[SessionManager] Audio buffer full for ${sessionId}, dropping chunk`);
+                return;
+            }
             session.audioBuffer.push(chunk);
         }
     }
@@ -140,6 +153,11 @@ class SessionManager {
             session.state = 'ended';
             session.endedAt = new Date();
             session.audioBuffer = [];
+            
+            if (session.abortController) {
+                session.abortController.abort('session_ended');
+                session.abortController = null;
+            }
 
             const duration = session.endedAt.getTime() - session.startedAt.getTime();
             console.log(
@@ -168,6 +186,7 @@ class SessionManager {
         state: string;
         duration: number;
         turns: number;
+        metrics: ReturnType<SessionMetricsTracker['summarize']>;
     }> {
         const now = Date.now();
         return Array.from(this.sessions.values()).map((s) => ({
@@ -176,6 +195,7 @@ class SessionManager {
             state: s.state,
             duration: Math.round((now - s.startedAt.getTime()) / 1000),
             turns: s.transcript.length,
+            metrics: s.metrics.summarize(),
         }));
     }
 }

@@ -4,13 +4,16 @@
 -- ============================================================
 
 -- Enable the uuid-ossp extension for uuid_generate_v4()
+-- Enable the uuid-ossp extension (optional in PG13+ but kept for compatibility)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+SET search_path TO public, extensions;
+
 
 -- ----------------------------------------------------------
 -- Table: drivers
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS drivers (
-    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name           TEXT        NOT NULL,
     phone_number   TEXT        NOT NULL UNIQUE,
     status         TEXT        NOT NULL DEFAULT 'active'
@@ -27,7 +30,7 @@ COMMENT ON COLUMN drivers.status       IS 'Current availability: active | on_bre
 -- Table: deliveries
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS deliveries (
-    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     driver_id         UUID        NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
     destination       TEXT        NOT NULL,
     scheduled_time    TIMESTAMPTZ NOT NULL,
@@ -60,10 +63,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_drivers_updated_at ON drivers;
 CREATE TRIGGER trg_drivers_updated_at
     BEFORE UPDATE ON drivers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+DROP TRIGGER IF EXISTS trg_deliveries_updated_at ON deliveries;
 CREATE TRIGGER trg_deliveries_updated_at
     BEFORE UPDATE ON deliveries
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -98,7 +103,7 @@ END $$;
 -- Tracks all AI-driven state mutations for traceability.
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dispatch_audit_log (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id    TEXT        NOT NULL,
     driver_id     UUID        NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
     action        TEXT        NOT NULL,

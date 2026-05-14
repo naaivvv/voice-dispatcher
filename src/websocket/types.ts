@@ -14,6 +14,8 @@ export type ClientMessage =
         model_id?: string;
         output_format?: string;
     }
+    | { type: 'driver.transcription'; text: string }
+    | { type: 'driver.interrupt' }
     | { type: 'call.end' }
     | { type: 'audio.chunk' };  // Binary frames are sent separately
 
@@ -25,6 +27,8 @@ export type ServerMessage =
     | { type: 'session.ready'; message: string }
     | { type: 'agent.thinking' }
     | { type: 'agent.speaking'; text: string }
+    | { type: 'agent.response'; text: string; intent: string }
+    | { type: 'action.executed'; tool: string; result: string }
     | {
         type: 'audio.output.start';
         format: string;
@@ -33,6 +37,7 @@ export type ServerMessage =
         text: string;
     }
     | { type: 'audio.output.done'; bytes: number }
+    | { type: 'audio.interrupted' }
     | { type: 'agent.done' }
     | { type: 'session.ended'; reason: string }
     | { type: 'error'; message: string };
