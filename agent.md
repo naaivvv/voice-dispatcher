@@ -32,7 +32,7 @@ The core outcome is an operational backend that can:
 - Server: Express and `ws`.
 - Database: Supabase client and SQL schema in `src/db`.
 - Voice: ElevenLabs TTS in `src/voice`.
-- AI orchestration: LangChain with OpenAI in `src/agent`.
+- AI orchestration: LangChain with Groq in `src/agent`.
 - Configuration: `.env` locally, `.env.example` for documented variables.
 
 ## Scope Rules
@@ -141,7 +141,7 @@ Do not make code changes.
 
 ### Add Provider Integration
 
-Use when adding or refining integrations such as ElevenLabs, Supabase, OpenAI, or LangChain.
+Use when adding or refining integrations such as ElevenLabs, Supabase, Groq, or LangChain.
 
 ```text
 Use @agent.md, @PROJECT.md, @ROADMAP.md, @src, and @.env.example.

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Dispatcher Test Client</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .row { display: flex; gap: 10px; margin-bottom: 15px; }
+        input[type="text"] { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        button { padding: 10px 20px; border: none; border-radius: 4px; background-color: #0066cc; color: white; font-size: 16px; cursor: pointer; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        button.danger { background-color: #cc0000; }
+        #log { background: #1e1e1e; color: #00ff00; font-family: monospace; padding: 15px; border-radius: 4px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: red; margin-right: 5px; }
+        .connected { background-color: #00cc00; }
+    </style>
+</head>
+<body>
+    <h1>Voice Dispatcher Test Client</h1>
+    
+    <div class="card">
+        <h3><span id="statusDot" class="status-dot"></span> Connection</h3>
+        <div class="row">
+            <input type="text" id="phoneInput" placeholder="Enter Driver Phone Number (e.g. +15551234567)" value="+15551234567">
+            <button id="connectBtn">Connect (call.start)</button>
+            <button id="disconnectBtn" class="danger" disabled>Disconnect</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Simulate Driver</h3>
+        <div class="row">
+            <input type="text" id="transcriptInput" placeholder="Type what the driver says..." disabled>
+            <button id="sendTranscriptBtn" disabled>Send Transcription</button>
+        </div>
+        <div class="row">
+            <button id="interruptBtn" class="danger" disabled>Interrupt Agent</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>System Log</h3>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let audioChunks = [];
+        let currentAudio = null;
+
+        const ui = {
+            statusDot: document.getElementById('statusDot'),
+            phoneInput: document.getElementById('phoneInput'),
+            connectBtn: document.getElementById('connectBtn'),
+            disconnectBtn: document.getElementById('disconnectBtn'),
+            transcriptInput: document.getElementById('transcriptInput'),
+            sendTranscriptBtn: document.getElementById('sendTranscriptBtn'),
+            interruptBtn: document.getElementById('interruptBtn'),
+            log: document.getElementById('log')
+        };
+
+        function appendLog(message, isServer = false) {
+            const time = new Date().toLocaleTimeString();
+            const prefix = isServer ? '[SERVER]' : '[CLIENT]';
+            const color = isServer ? '#00ccff' : '#00ff00';
+            const html = `<span style="color: ${color}">${time} ${prefix} ${message}</span>\n`;
+            ui.log.innerHTML += html;
+            ui.log.scrollTop = ui.log.scrollHeight;
+        }
+
+        function playBufferedAudio() {
+            if (audioChunks.length === 0) return;
+            const blob = new Blob(audioChunks, { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            
+            if (currentAudio) {
+                currentAudio.pause();
+            }
+
+            currentAudio = new Audio(url);
+            currentAudio.play().catch(e => appendLog(`Audio play error: ${e.message}`));
+            currentAudio.onended = () => {
+                URL.revokeObjectURL(url);
+            };
+            audioChunks = []; // Reset for next response
+        }
+
+        function setConnected(connected) {
+            ui.statusDot.className = `status-dot ${connected ? 'connected' : ''}`;
+            ui.connectBtn.disabled = connected;
+            ui.phoneInput.disabled = connected;
+            ui.disconnectBtn.disabled = !connected;
+            ui.transcriptInput.disabled = !connected;
+            ui.sendTranscriptBtn.disabled = !connected;
+            ui.interruptBtn.disabled = !connected;
+        }
+
+        ui.connectBtn.addEventListener('click', () => {
+            const phone = ui.phoneInput.value.trim();
+            if (!phone) {
+                alert('Please enter a phone number');
+                return;
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/call`;
+            
+            appendLog(`Connecting to ${wsUrl}...`);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                setConnected(true);
+                appendLog('WebSocket connection opened.');
+                
+                const msg = { type: 'call.start', phone_number: phone };
+                ws.send(JSON.stringify(msg));
+                appendLog(`Sent: ${JSON.stringify(msg)}`);
+            };
+
+            ws.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    // It's binary audio data from ElevenLabs
+                    appendLog(`Received binary audio chunk (${event.data.size} bytes)`, true);
+                    audioChunks.push(event.data);
+                } else {
+                    const msg = JSON.parse(event.data);
+                    appendLog(`Received: ${JSON.stringify(msg)}`, true);
+
+                    if (msg.type === 'audio.output.done') {
+                        playBufferedAudio();
+                    } else if (msg.type === 'audio.interrupted') {
+                        audioChunks = []; // discard pending audio
+                        if (currentAudio) {
+                            currentAudio.pause();
+                            currentAudio = null;
+                        }
+                    } else if (msg.type === 'session.ended') {
+                        ws.close();
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                setConnected(false);
+                appendLog('WebSocket connection closed.');
+                ws = null;
+            };
+
+            ws.onerror = (err) => {
+                appendLog(`WebSocket Error occurred.`);
+            };
+        });
+
+        ui.disconnectBtn.addEventListener('click', () => {
+            if (ws) {
+                const msg = { type: 'call.end' };
+                ws.send(JSON.stringify(msg));
+                appendLog(`Sent: ${JSON.stringify(msg)}`);
+                ws.close();
+            }
+        });
+
+        ui.sendTranscriptBtn.addEventListener('click', () => {
+            const text = ui.transcriptInput.value.trim();
+            if (!text || !ws) return;
+
+            const msg = { type: 'driver.transcription', text: text };
+            ws.send(JSON.stringify(msg));
+            appendLog(`Sent: ${JSON.stringify(msg)}`);
+            
+            ui.transcriptInput.value = '';
+        });
+
+        ui.interruptBtn.addEventListener('click', () => {
+            if (!ws) return;
+            const msg = { type: 'driver.interrupt' };
+            ws.send(JSON.stringify(msg));
+            appendLog(`Sent: ${JSON.stringify(msg)}`);
+            
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+            audioChunks = [];
+        });
+
+        // Allow sending transcript with Enter key
+        ui.transcriptInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                ui.sendTranscriptBtn.click();
+            }
+        });
+    </script>
+</body>
+</html>

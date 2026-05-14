@@ -1,4 +1,4 @@
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatGroq } from '@langchain/groq';
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { BaseMessage } from '@langchain/core/messages';
 
@@ -28,28 +28,28 @@ export interface OrchestratorResult {
     toolExecutions: ToolExecutionRecord[];
 }
 
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'llama3-70b-8192';
 const MAX_TOOL_ITERATIONS = 5;
 
 class DispatcherOrchestrator {
-    private readonly llm: ChatOpenAI;
-    private readonly llmWithTools: ReturnType<ChatOpenAI['bindTools']>;
+    private readonly llm: ChatGroq;
+    private readonly llmWithTools: ReturnType<ChatGroq['bindTools']>;
     private readonly modelName: string;
 
     constructor() {
-        const apiKey = process.env.OPENAI_API_KEY;
+        const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
             throw new Error(
-                'OPENAI_API_KEY is required for the dispatcher orchestrator. ' +
+                'GROQ_API_KEY is required for the dispatcher orchestrator. ' +
                 'Set it in .env or environment variables.'
             );
         }
 
-        this.modelName = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+        this.modelName = process.env.GROQ_MODEL || DEFAULT_MODEL;
 
-        this.llm = new ChatOpenAI({
-            openAIApiKey: apiKey,
-            modelName: this.modelName,
+        this.llm = new ChatGroq({
+            apiKey: apiKey,
+            model: this.modelName,
             temperature: 0.7,
             maxTokens: 500,
         });
@@ -217,6 +217,12 @@ class DispatcherOrchestrator {
 
         // 5. Parse the response for intent and clean text
         const parsed: ParsedResponse = parseAgentResponse(finalText);
+
+        // Fallback for empty text to prevent TTS crashes
+        if (!parsed.text) {
+            console.warn(`[Orchestrator] Parsed text is empty from raw response: "${finalText}". Using fallback text.`);
+            parsed.text = "Got it. I've updated the system.";
+        }
 
         // 6. Store the agent's response in memory and session transcript
         conversationMemory.addAgentMessage(sessionId, parsed.text);

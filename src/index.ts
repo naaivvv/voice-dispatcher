@@ -1,13 +1,13 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
-import dotenv from 'dotenv';
+import path from 'path';
 import { elevenLabsTts } from './voice';
 import { createWebSocketServer, sessionManager } from './websocket';
 
-dotenv.config();
-
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, '../public')));
 
 const PORT = process.env.PORT || 3000;
 

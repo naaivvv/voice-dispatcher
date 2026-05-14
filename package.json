@@ -16,7 +16,7 @@
   "type": "commonjs",
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.47.0",
-    "@langchain/openai": "^1.4.5",
+    "@langchain/groq": "^1.2.0",
     "@supabase/supabase-js": "^2.105.4",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
