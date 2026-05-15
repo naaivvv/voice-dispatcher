@@ -23,7 +23,7 @@
     <div class="card">
         <h3><span id="statusDot" class="status-dot"></span> Connection</h3>
         <div class="row">
-            <input type="text" id="tokenInput" placeholder="Dispatcher client token">
+            <input type="text" id="tokenInput" placeholder="Supabase user access token">
         </div>
         <div class="row">
             <input type="text" id="phoneInput" placeholder="Enter Driver Phone Number (e.g. +15551234567)" value="+15551234567">
@@ -111,7 +111,7 @@
 
             const token = ui.tokenInput.value.trim();
             if (!token) {
-                alert('Please enter the dispatcher client token');
+                alert('Please enter a Supabase user access token');
                 return;
             }
 
@@ -155,14 +155,14 @@
                 }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
                 setConnected(false);
-                appendLog('WebSocket connection closed.');
+                appendLog(`WebSocket connection closed. code=${event.code} reason=${event.reason || '(none)'}`);
                 ws = null;
             };
 
-            ws.onerror = (err) => {
-                appendLog(`WebSocket Error occurred.`);
+            ws.onerror = () => {
+                appendLog('WebSocket error occurred. Check close code/reason and Render logs.');
             };
         });
 
