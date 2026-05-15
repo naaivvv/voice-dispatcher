@@ -41,20 +41,24 @@ To build a frontend client (like a mobile app or a driver dashboard), you will p
 
 ### Connection Setup
 
-Assuming the backend is deployed to Render, your WebSocket connection URL will look like this: `wss://<your-render-app-name>.onrender.com/ws/call`.
+The backend is deployed to Render with Service ID **`srv-d82lhfjeo5us73f8ron0`**.
+Your WebSocket connection URL is: `wss://voice-dispatcher.onrender.com/ws/call`.
+Your HTTP API URL is: `https://voice-dispatcher.onrender.com`.
 
 #### Authentication
-The WebSocket endpoint is secured using **WebSocket Subprotocols**. When establishing the connection, the frontend **MUST** pass two specific protocol strings:
-1. `'voice-dispatcher'` (The required application protocol)
-2. `DISPATCHER_CLIENT_TOKEN` (A shared secret configured on the backend to authenticate the client app)
+The WebSocket endpoint is secured using the user's **Supabase access token** via WebSocket subprotocols. When establishing the connection, the frontend **MUST** pass two protocol strings:
+1. `'voice-dispatcher'` (the required application protocol)
+2. The logged-in user's Supabase `session.access_token`
+
+The backend validates this token with Supabase before accepting the socket, then verifies that `call.start.phone_number` belongs to the authenticated driver.
 
 **Example JavaScript Connection:**
 ```javascript
 const wsUrl = 'wss://voice-dispatcher.onrender.com/ws/call';
-const clientToken = 'your-secure-frontend-token-here'; 
+const { data } = await supabase.auth.getSession();
+const accessToken = data.session?.access_token;
 
-// Both protocols must be passed in the array
-const ws = new WebSocket(wsUrl, ['voice-dispatcher', clientToken]);
+const ws = new WebSocket(wsUrl, ['voice-dispatcher', accessToken]);
 ```
 
 ### The Communication Lifecycle
@@ -142,12 +146,13 @@ If the backend is hosted on Render, the following configurations must be mirrore
 ### Backend Configurations (Render Environment Variables)
 - `PORT`: Set automatically by Render.
 - `ALLOWED_ORIGINS`: Set this to the URL of your new frontend application (e.g., `https://my-driver-app.vercel.app`).
-- `DISPATCHER_CLIENT_TOKEN`: Create a strong, secure string. Your frontend will need this exact string to connect.
+- `DISPATCHER_CLIENT_TOKEN`: Keep this only for protected HTTP admin routes such as `/sessions`; it is no longer used by the browser WebSocket client.
 - `SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY`: Your database credentials.
 - `GROQ_API_KEY`: For LangChain/LLM logic.
 - `ELEVENLABS_API_KEY`: For Text-to-Speech generation.
 
 ### Frontend Requirements
 - When deploying the frontend, ensure it connects using `wss://` (secure WebSockets) rather than `ws://`. 
-- Pass the shared `DISPATCHER_CLIENT_TOKEN` safely. Avoid hardcoding it directly in public source control; inject it via frontend build environment variables.
+- `VITE_WS_URL`: Set to `wss://voice-dispatcher.onrender.com/ws/call`.
+- The frontend must authenticate users with the same Supabase project used by the backend.
 - Ensure your frontend is served via HTTPS, as many browser-based microphone/speech recognition APIs require a secure context to function.

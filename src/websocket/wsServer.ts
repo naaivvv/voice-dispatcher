@@ -1,4 +1,4 @@
-import { Server as HTTPServer } from 'http';
+import { IncomingMessage, Server as HTTPServer } from 'http';
 import { RawData, WebSocket, WebSocketServer } from 'ws';
 import { elevenLabsTts } from '../voice';
 import { dispatcherOrchestrator } from '../agent';
@@ -15,6 +15,10 @@ import {
     wsAgentTurnLimiter,
     wsMessageLimiter,
 } from '../security';
+
+type AuthenticatedWebSocketRequest = IncomingMessage & {
+    dispatcherAuthUserId?: string;
+};
 
 function send(ws: WebSocket, message: ServerMessage): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -313,12 +317,6 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
                 return;
             }
 
-            if (!authenticateWebSocket(info.req)) {
-                console.warn(`[Security] WebSocket rejected for missing/invalid token from ${ip}`);
-                done(false, 401, 'Unauthorized');
-                return;
-            }
-
             const activeForIp = connectionsByIp.get(ip) ?? 0;
             if (activeForIp >= securityConfig.wsMaxConnectionsPerIp) {
                 console.warn(`[Security] WebSocket concurrent connection limit exceeded for ${ip}`);
@@ -331,7 +329,25 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
                 return;
             }
 
-            done(true);
+            authenticateWebSocket(info.req)
+                .then((auth) => {
+                    if (!auth.ok || !auth.userId) {
+                        console.warn(
+                            `[Security] WebSocket rejected for missing/invalid Supabase token from ${ip}: ` +
+                            `${auth.reason || 'unknown reason'}`
+                        );
+                        done(false, 401, 'Unauthorized');
+                        return;
+                    }
+
+                    (info.req as AuthenticatedWebSocketRequest).dispatcherAuthUserId = auth.userId;
+                    done(true);
+                })
+                .catch((err) => {
+                    const message = err instanceof Error ? err.message : 'unknown auth failure';
+                    console.error(`[Security] WebSocket auth failed for ${ip}: ${message}`);
+                    done(false, 401, 'Unauthorized');
+                });
         },
     });
 
@@ -341,7 +357,14 @@ export function createWebSocketServer(httpServer: HTTPServer): WebSocketServer {
         const ip = getRequestIp(req);
         connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
 
-        const session = sessionManager.createSession(ws);
+        const authUserId = (req as AuthenticatedWebSocketRequest).dispatcherAuthUserId;
+        if (!authUserId) {
+            console.warn('[Security] Closing WebSocket without authenticated user context');
+            ws.close(1008, 'unauthorized');
+            return;
+        }
+
+        const session = sessionManager.createSession(ws, authUserId);
         console.log(
             `[WS] New connection: session ${session.id} ` +
             `(active sessions: ${sessionManager.activeCount})`

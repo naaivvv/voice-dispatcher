@@ -19,6 +19,10 @@ function numberFromEnv(name: string, fallback: number): number {
     return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+export function normalizeOrigin(origin: string): string {
+    return origin.trim().replace(/\/+$/, '');
+}
+
 function listFromEnv(name: string): string[] {
     const raw = process.env[name];
     if (!raw) {
@@ -27,7 +31,7 @@ function listFromEnv(name: string): string[] {
 
     return raw
         .split(',')
-        .map((origin) => origin.trim())
+        .map(normalizeOrigin)
         .filter(Boolean);
 }
 

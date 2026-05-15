@@ -17,3 +17,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+#Markdown Guides
+DEPLOYMENT_RENDER.md
+

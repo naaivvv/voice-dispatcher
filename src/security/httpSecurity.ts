@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
-import { securityConfig } from './config';
+import { normalizeOrigin, securityConfig } from './config';
 import { FixedWindowRateLimiter } from './rateLimiter';
 
 const bearerPrefix = 'Bearer ';
@@ -66,9 +66,10 @@ export function enforceAllowedOrigin(req: Request, res: Response, next: NextFunc
     }
 
     const origin = req.headers.origin;
-    if (!origin || securityConfig.allowedOrigins.includes(origin)) {
-        if (origin) {
-            res.setHeader('Access-Control-Allow-Origin', origin);
+    const normalizedOrigin = origin ? normalizeOrigin(origin) : null;
+    if (!normalizedOrigin || securityConfig.allowedOrigins.includes(normalizedOrigin)) {
+        if (normalizedOrigin) {
+            res.setHeader('Access-Control-Allow-Origin', normalizedOrigin);
             res.setHeader('Vary', 'Origin');
         }
         next();
@@ -78,4 +79,3 @@ export function enforceAllowedOrigin(req: Request, res: Response, next: NextFunc
     console.warn(`[Security] Rejected HTTP origin ${origin} for ${req.method} ${req.path}`);
     res.status(403).json({ error: 'Forbidden' });
 }
-

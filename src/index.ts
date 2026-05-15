@@ -30,7 +30,8 @@ app.get('/health', (_req, res) => {
         activeSessions: sessionManager.activeCount,
         providers: {
             ttsConfigured: elevenLabsTts.getConfig().configured,
-            clientAuthConfigured: Boolean(securityConfig.clientToken),
+            wsAuth: 'supabase_access_token',
+            adminClientAuthConfigured: Boolean(securityConfig.clientToken),
         },
     });
 });

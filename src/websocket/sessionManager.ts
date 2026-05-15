@@ -12,6 +12,8 @@ import { SessionMetricsTracker } from '../utils/metrics';
 export interface CallSession {
     /** Unique session identifier */
     id: string;
+    /** Supabase auth user allowed to use this session */
+    authenticatedUserId: string;
     /** The connected WebSocket */
     ws: WebSocket;
     /** Driver associated with this call (set after identification) */
@@ -44,9 +46,10 @@ class SessionManager {
     /**
      * Create a new session for an incoming WebSocket connection.
      */
-    createSession(ws: WebSocket): CallSession {
+    createSession(ws: WebSocket, authenticatedUserId: string): CallSession {
         const session: CallSession = {
             id: uuidv4(),
+            authenticatedUserId,
             ws,
             driver: null,
             activeDeliveries: [],
@@ -78,6 +81,14 @@ class SessionManager {
         const driver = await getDriverByPhone(phoneNumber);
         if (!driver) {
             console.warn(`[SessionManager] No driver found for phone: ${phoneNumber}`);
+            return null;
+        }
+
+        if (driver.id !== session.authenticatedUserId) {
+            console.warn(
+                `[SessionManager] Authenticated user ${session.authenticatedUserId} attempted ` +
+                `to start a call for driver ${driver.id}`
+            );
             return null;
         }
 
