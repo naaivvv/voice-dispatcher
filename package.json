@@ -1,7 +1,7 @@
 {
   "name": "voice-dispatcher",
   "version": "1.0.0",
-  "description": "AI-powered voice dispatch system for delivery fleet management",
+  "description": "AI-powered voice dispatch system for delivery fleet management with TTS attribution: elevenlabs.io",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
