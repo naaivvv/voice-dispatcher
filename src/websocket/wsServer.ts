@@ -1,6 +1,6 @@
 import { IncomingMessage, Server as HTTPServer } from 'http';
 import { RawData, WebSocket, WebSocketServer } from 'ws';
-import { elevenLabsTts } from '../voice';
+import { describeTtsError, elevenLabsTts } from '../voice';
 import { dispatcherOrchestrator } from '../agent';
 import { sessionManager, CallSession } from './sessionManager';
 import { AUDIO_CONFIG, ClientMessage, ServerMessage } from './types';
@@ -248,11 +248,11 @@ async function handleControlMessage(
                     if (err.name === 'AbortError') {
                         console.log(`[WS] TTS aborted for session ${session.id}`);
                     } else {
-                        const errorMessage = err instanceof Error ? err.message : 'Unknown TTS failure';
+                        const errorMessage = describeTtsError(err);
                         console.error(`[WS] TTS error for session ${session.id}:`, errorMessage);
                         send(ws, {
                             type: 'audio.output.error',
-                            message: 'Voice playback failed, but the dispatcher response was processed.',
+                            message: `Voice playback failed: ${errorMessage}`,
                         });
                     }
                 } finally {

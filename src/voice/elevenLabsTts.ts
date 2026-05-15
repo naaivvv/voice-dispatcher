@@ -12,6 +12,8 @@ export interface TtsOptions {
 
 export interface TtsConfig {
     configured: boolean;
+    apiKeyConfigured: boolean;
+    voiceConfigured: boolean;
     defaultVoiceId: string | null;
     modelId: string;
     outputFormat: string;
@@ -30,6 +32,91 @@ function getNumberFromEnv(name: string, fallback: number): number {
 
     const value = Number(raw);
     return Number.isFinite(value) ? value : fallback;
+}
+
+function stringifyErrorBody(body: unknown): string {
+    if (!body) {
+        return '';
+    }
+
+    if (typeof body === 'string') {
+        return body;
+    }
+
+    if (typeof body === 'object') {
+        const candidate = body as {
+            detail?: unknown;
+            message?: unknown;
+            error?: unknown;
+        };
+
+        if (typeof candidate.message === 'string') return candidate.message;
+        if (typeof candidate.error === 'string') return candidate.error;
+
+        if (candidate.detail) {
+            if (typeof candidate.detail === 'string') return candidate.detail;
+            if (typeof candidate.detail === 'object') {
+                const detail = candidate.detail as { message?: unknown; status?: unknown };
+                if (typeof detail.message === 'string') return detail.message;
+                if (typeof detail.status === 'string') return detail.status;
+            }
+        }
+    }
+
+    try {
+        return JSON.stringify(body);
+    } catch {
+        return '';
+    }
+}
+
+export function describeTtsError(err: unknown): string {
+    const error = err as {
+        name?: string;
+        message?: string;
+        statusCode?: number;
+        body?: unknown;
+    };
+
+    const status = error.statusCode ? `ElevenLabs HTTP ${error.statusCode}` : error.name;
+    const body = stringifyErrorBody(error.body);
+    const message = body || error.message || 'Unknown ElevenLabs TTS failure';
+    const prefix = status ? `${status}: ` : '';
+
+    return `${prefix}${message}`.slice(0, 300);
+}
+
+async function streamReadable(
+    stream: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
+    onChunk: (chunk: Buffer) => void | Promise<void>
+): Promise<number> {
+    let totalBytes = 0;
+
+    if (Symbol.asyncIterator in Object(stream)) {
+        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+            const buffer = Buffer.from(chunk);
+            totalBytes += buffer.byteLength;
+            await onChunk(buffer);
+        }
+        return totalBytes;
+    }
+
+    const reader = (stream as ReadableStream<Uint8Array>).getReader();
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+
+            const buffer = Buffer.from(value);
+            totalBytes += buffer.byteLength;
+            await onChunk(buffer);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    return totalBytes;
 }
 
 class ElevenLabsTtsService {
@@ -60,8 +147,13 @@ class ElevenLabsTtsService {
     }
 
     getConfig(): TtsConfig {
+        const apiKeyConfigured = Boolean(this.client);
+        const voiceConfigured = Boolean(this.defaultVoiceId);
+
         return {
-            configured: Boolean(this.client && this.defaultVoiceId),
+            configured: apiKeyConfigured && voiceConfigured,
+            apiKeyConfigured,
+            voiceConfigured,
             defaultVoiceId: this.defaultVoiceId,
             modelId: this.modelId,
             outputFormat: this.outputFormat,
@@ -107,15 +199,7 @@ class ElevenLabsTtsService {
             }
         );
 
-        let totalBytes = 0;
-
-        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
-            const buffer = Buffer.from(chunk);
-            totalBytes += buffer.byteLength;
-            await options.onChunk(buffer);
-        }
-
-        return totalBytes;
+        return streamReadable(stream as AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>, options.onChunk);
     }
 }
 

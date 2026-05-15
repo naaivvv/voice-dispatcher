@@ -23,13 +23,19 @@ const PORT = process.env.PORT || 3000;
 
 // ── Health check ───────────────────────────────────────────
 app.get('/health', (_req, res) => {
+    const ttsConfig = elevenLabsTts.getConfig();
+
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptimeSeconds: process.uptime(),
         activeSessions: sessionManager.activeCount,
         providers: {
-            ttsConfigured: elevenLabsTts.getConfig().configured,
+            ttsConfigured: ttsConfig.configured,
+            ttsApiKeyConfigured: ttsConfig.apiKeyConfigured,
+            ttsVoiceConfigured: ttsConfig.voiceConfigured,
+            ttsModelId: ttsConfig.modelId,
+            ttsOutputFormat: ttsConfig.outputFormat,
             wsAuth: 'supabase_access_token',
             adminClientAuthConfigured: Boolean(securityConfig.clientToken),
         },
