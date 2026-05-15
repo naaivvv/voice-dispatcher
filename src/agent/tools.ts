@@ -116,7 +116,7 @@ export const updateEtaTool = tool(
     {
         name: 'update_eta',
         description:
-            'Update the estimated arrival time for a delivery. Use delay_minutes to add a delay relative to the current ETA, or new_eta to set an absolute time. Always confirm with the driver before calling this.',
+            'Update the estimated arrival time for a delivery. Use delay_minutes to add a delay relative to the current ETA, or new_eta to set an absolute time. Call this immediately when the driver gives a clear delay or arrival update.',
         schema: z.object({
             session_id: z.string().describe('The current WebSocket session ID'),
             delivery_id: z.string().describe('UUID of the delivery to update'),
@@ -239,7 +239,7 @@ export const updateDriverStatusTool = tool(
     {
         name: 'update_driver_status',
         description:
-            'Update a driver\'s availability status. Use when a driver reports they are going on break, coming back active, or experiencing a delay. Always confirm with the driver first.',
+            'Update a driver\'s availability status. Use immediately when a driver reports they are going on break, coming back active, or experiencing a delay.',
         schema: z.object({
             session_id: z.string().describe('The current WebSocket session ID'),
             driver_id: z.string().describe('UUID of the driver to update'),

@@ -37,6 +37,7 @@ export type ServerMessage =
         text: string;
     }
     | { type: 'audio.output.done'; bytes: number }
+    | { type: 'audio.output.error'; message: string }
     | { type: 'audio.interrupted' }
     | { type: 'agent.done' }
     | { type: 'session.ended'; reason: string }

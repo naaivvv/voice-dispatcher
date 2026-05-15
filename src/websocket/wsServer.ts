@@ -194,21 +194,21 @@ async function handleControlMessage(
                 send(ws, { type: 'agent.thinking' });
 
                 timer.start('llm');
-                // Process through the LangChain orchestrator
+                // Process through the LangChain orchestrator and any DB tools.
                 const result = await dispatcherOrchestrator.processDriverMessage(
                     session.id,
                     transcription
                 );
                 timer.end('llm');
 
-                // Send the structured response (text + intent) for client logic
+                // Send the structured response (text + intent) for client logic.
                 send(ws, {
                     type: 'agent.response',
                     text: result.text,
                     intent: result.intent,
                 });
 
-                // Notify client about any tools that were executed
+                // Notify client about any tools that were executed.
                 for (const exec of result.toolExecutions) {
                     send(ws, {
                         type: 'action.executed',
@@ -217,44 +217,56 @@ async function handleControlMessage(
                     });
                 }
 
-                // Stream TTS audio of the agent's response
-                send(ws, { type: 'agent.speaking', text: result.text });
-                send(ws, {
-                    type: 'audio.output.start',
-                    format: AUDIO_CONFIG.outputFormat,
-                    sample_rate: AUDIO_CONFIG.outputSampleRate,
-                    voice_id: elevenLabsTts.getConfig().defaultVoiceId,
-                    text: result.text,
-                });
-
-                session.abortController = new AbortController();
-
-                timer.start('tts');
-                const bytes = await elevenLabsTts.streamSpeech({
-                    text: result.text,
-                    abortSignal: session.abortController.signal,
-                    onChunk: (chunk) => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(chunk, { binary: true });
-                        }
-                    },
-                });
-                timer.end('tts');
-
-                send(ws, { type: 'audio.output.done', bytes });
-                send(ws, { type: 'agent.done' });
-            } catch (err: any) {
-                if (err.name === 'AbortError') {
-                    console.log(`[WS] Orchestrator speech aborted for session ${session.id}`);
-                } else {
-                    const errorMessage = err instanceof Error ? err.message : 'Unknown orchestrator failure';
-                    console.error(`[WS] Orchestrator error for session ${session.id}:`, errorMessage);
+                try {
+                    // Stream TTS audio separately so voice failures do not look like LLM/tool failures.
+                    send(ws, { type: 'agent.speaking', text: result.text });
                     send(ws, {
-                        type: 'error',
-                        message: 'Agent processing failed',
+                        type: 'audio.output.start',
+                        format: AUDIO_CONFIG.outputFormat,
+                        sample_rate: AUDIO_CONFIG.outputSampleRate,
+                        voice_id: elevenLabsTts.getConfig().defaultVoiceId,
+                        text: result.text,
                     });
+
+                    session.abortController = new AbortController();
+
+                    timer.start('tts');
+                    const bytes = await elevenLabsTts.streamSpeech({
+                        text: result.text,
+                        abortSignal: session.abortController.signal,
+                        onChunk: (chunk) => {
+                            if (ws.readyState === WebSocket.OPEN) {
+                                ws.send(chunk, { binary: true });
+                            }
+                        },
+                    });
+                    timer.end('tts');
+
+                    send(ws, { type: 'audio.output.done', bytes });
+                } catch (err: any) {
+                    timer.end('tts');
+                    if (err.name === 'AbortError') {
+                        console.log(`[WS] TTS aborted for session ${session.id}`);
+                    } else {
+                        const errorMessage = err instanceof Error ? err.message : 'Unknown TTS failure';
+                        console.error(`[WS] TTS error for session ${session.id}:`, errorMessage);
+                        send(ws, {
+                            type: 'audio.output.error',
+                            message: 'Voice playback failed, but the dispatcher response was processed.',
+                        });
+                    }
+                } finally {
+                    session.abortController = null;
                     send(ws, { type: 'agent.done' });
                 }
+            } catch (err: any) {
+                const errorMessage = err instanceof Error ? err.message : 'Unknown orchestrator failure';
+                console.error(`[WS] Agent processing error for session ${session.id}:`, errorMessage);
+                send(ws, {
+                    type: 'error',
+                    message: 'Agent processing failed',
+                });
+                send(ws, { type: 'agent.done' });
             } finally {
                 session.state = 'active';
                 session.abortController = null;
