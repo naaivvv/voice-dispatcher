@@ -42,7 +42,35 @@ export function isAllowedWsOrigin(req: IncomingMessage): boolean {
     }
 
     const origin = req.headers.origin;
-    return !origin || securityConfig.allowedOrigins.includes(normalizeOrigin(origin));
+    if (!origin) {
+        return true;
+    }
+
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (securityConfig.allowedOrigins.includes(normalizedOrigin)) {
+        return true;
+    }
+
+    if (!securityConfig.allowPrivateNetworkOrigins) {
+        return false;
+    }
+
+    try {
+        const { hostname, protocol } = new URL(normalizedOrigin);
+        if (protocol !== 'http:') {
+            return false;
+        }
+
+        return (
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+            /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+            /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname)
+        );
+    } catch {
+        return false;
+    }
 }
 
 export interface WebSocketAuthResult {
